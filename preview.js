@@ -3,8 +3,9 @@
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 
-const HTML = 'file://' + path.resolve(__dirname, '美股30气泡涨跌动画-product1.html').replace(/\\/g, '/');
+const HTML = pathToFileURL(path.resolve(__dirname, '美股30气泡涨跌动画-product1.html')).href;
 const T = 3000; // 取第 3 秒:气泡已落位、数值已滚完
 
 (async () => {
@@ -15,7 +16,7 @@ const T = 3000; // 取第 3 秒:气泡已落位、数值已滚完
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 1 });
-  await page.goto(HTML, { waitUntil: 'networkidle0' });
+  await page.goto(HTML, { waitUntil: 'load' });
   await page.waitForFunction('typeof byR !== "undefined" && byR.length > 0');
   await page.evaluate(() => { paused = true; });
 

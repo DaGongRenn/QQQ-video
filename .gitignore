@@ -1,0 +1,9 @@
+# 依赖与本地产物——不必上传到 GitHub(云端会自动安装/生成)
+node_modules/
+out_en.mp4
+out_cn.mp4
+date.txt
+preview_*.png
+
+# Claude Code 本地工作目录,勿公开
+.claude/

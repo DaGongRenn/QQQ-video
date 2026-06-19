@@ -1,0 +1,13 @@
+{
+  "name": "us30-bubble-video",
+  "version": "1.0.0",
+  "private": true,
+  "description": "每日美股 30 只明星个股涨跌泡泡图,自动渲染 15s 竖屏视频",
+  "scripts": {
+    "render": "node capture.js"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "puppeteer": "^24.0.0"
+  }
+}

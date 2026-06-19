@@ -1,0 +1,72 @@
+name: 每日美股气泡动画
+
+on:
+  schedule:
+    # cron 为 UTC 时间。21:30 UTC ≈ 美股收盘后(夏令时收盘后 1.5h / 冬令时收盘后 0.5h)
+    - cron: '30 21 * * 1-5'   # 周一至周五
+  workflow_dispatch: {}        # 允许在 Actions 页面手动点 "Run workflow" 测试
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装中文字体(画布渲染中文必需)
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安装依赖
+        run: npm install
+
+      - name: 渲染两版视频(英文名 + 中文名)
+        env:
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+        run: node capture.js
+
+      - name: 读取日期
+        id: meta
+        run: echo "date=$(cat date.txt 2>/dev/null || date -u +%m/%d)" >> "$GITHUB_OUTPUT"
+
+      - name: 邮件①·英文名版
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: 美股气泡动画 <${{ secrets.MAIL_USERNAME }}>
+          to: ${{ secrets.MAIL_USERNAME }}          # 默认发给自己;想发别处改这里
+          subject: 📈 美股气泡速览(英文名版) ${{ steps.meta.outputs.date }}
+          body: |
+            ${{ steps.meta.outputs.date }} 英文名版,见附件 out_en.mp4,下载即可发布。
+          attachments: out_en.mp4
+
+      - name: 邮件②·中文名版
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: 美股气泡动画 <${{ secrets.MAIL_USERNAME }}>
+          to: ${{ secrets.MAIL_USERNAME }}
+          subject: 📈 美股气泡速览(中文名版) ${{ steps.meta.outputs.date }}
+          body: |
+            ${{ steps.meta.outputs.date }} 中文名版,见附件 out_cn.mp4,下载即可发布。
+          attachments: out_cn.mp4
+
+      - name: 备份成片(可在 Actions 页面下载)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bubble-videos
+          path: |
+            out_en.mp4
+            out_cn.mp4
+          retention-days: 7

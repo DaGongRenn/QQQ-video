@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>明星个股涨跌速览</title>
+<style>
+  html,body{margin:0;background:#000;height:100%;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}
+  canvas{height:100vh;width:auto;max-width:100vw;display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+/* ============================================================
+   ① 实时数据开关（推荐填上，每次打开自动获取最近交易日数据）
+   到 https://finnhub.io 免费注册，复制 API key 填到下面引号里。
+   留空则使用下方内置数据。免费额度 60次/分钟，足够 30 只。
+   ============================================================ */
+const FINNHUB_KEY = "";   // 例如 "ctxxxx....xxxx"
+
+/* ============================================================
+   ② 内置数据（未填 key 或获取失败时使用）
+   依据 6/18 真实盘面建模：纳指涨近2%、半导体领涨、苹果/医药走弱。
+   正数=上涨(红)，负数=下跌(绿)，数值大小=气泡大小，可自行修改。
+   ============================================================ */
+const FALLBACK = [
+  {n:'MU',   p:8.5}, {n:'LRCX', p:6.0}, {n:'AMAT', p:5.5}, {n:'AMD',  p:5.2}, {n:'APP',  p:5.0},
+  {n:'ASML', p:4.8}, {n:'PLTR', p:4.5}, {n:'NVDA', p:3.8}, {n:'AVGO', p:3.5}, {n:'DDOG', p:2.8},
+  {n:'TSLA', p:2.5}, {n:'SNPS', p:2.5}, {n:'TXN',  p:2.0}, {n:'NFLX', p:1.8}, {n:'PANW', p:1.8},
+  {n:'MSFT', p:1.5}, {n:'MELI', p:1.5}, {n:'AMZN', p:1.3}, {n:'GOOGL',p:1.2}, {n:'META', p:1.0},
+  {n:'INTU', p:0.9}, {n:'BKNG', p:0.6},
+  {n:'AAPL', p:-0.8},{n:'COST', p:-0.4},{n:'ISRG', p:-0.5},{n:'WMT',  p:-0.6},
+  {n:'VRTX', p:-0.7},{n:'REGN', p:-1.0},{n:'GILD', p:-1.2},{n:'ALNY', p:-1.8}
+];
+
+const CHANNEL = '@Trust-国运';
+// 右上角指数（可自行修改；填了 Finnhub key 时会自动用 QQQ 纳指100ETF 实时数据覆盖）
+const INDEX = { name:'纳斯达克', value:'27,470', chg:'+1.9%' };
+const LOOP = 15000, ENTER = 8000, W = 1080, H = 1920;
+const RED = '255,72,66', GREEN = '54,224,120';
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const dpr = Math.min(window.devicePixelRatio||1, 2);
+cv.width = W*dpr; cv.height = H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+
+const easeOutBack = t=>{const c1=1.70158,c3=c1+1;return 1+c3*Math.pow(t-1,3)+c1*Math.pow(t-1,2);};
+const easeOutCubic = t=>1-Math.pow(1-t,3);
+const easeInOut = t=>t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+
+const G_RECT={x0:50,y0:300,x1:1030,y1:1180}, L_RECT={x0:300,y0:1290,x1:780,y1:1620};
+
+function packGroup(items, rect, fill, minR, maxR, pad){
+  const cx=(rect.x0+rect.x1)/2, cy=(rect.y0+rect.y1)/2;
+  const Wr=rect.x1-rect.x0, Hr=rect.y1-rect.y0;
+  const sum=items.reduce((s,it)=>s+Math.abs(it.p),0)||1;
+  let k=Math.sqrt(fill*Wr*Hr/(Math.PI*sum));
+  items.forEach(it=>{ it.r=Math.min(maxR,Math.max(minR,k*Math.sqrt(Math.abs(it.p)))); });
+  items.forEach((it,i)=>{ const a=i*2.39996, rr=Math.sqrt(i+0.5)*Math.min(Wr,Hr)*0.06;
+    it.x=cx+Math.cos(a)*rr; it.y=cy+Math.sin(a)*rr; });
+  for(let iter=0;iter<520;iter++){
+    items.forEach(it=>{ it.x+=(cx-it.x)*0.013; it.y+=(cy-it.y)*0.016; });
+    for(let i=0;i<items.length;i++) for(let j=i+1;j<items.length;j++){
+      const a=items[i],b=items[j]; let dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||0.01;
+      const md=a.r+b.r+pad;
+      if(d<md){ const o=(md-d)/2/d; dx*=o;dy*=o; a.x-=dx;a.y-=dy; b.x+=dx;b.y+=dy; }
+    }
+    items.forEach(it=>{ it.x=Math.max(rect.x0+it.r,Math.min(rect.x1-it.r,it.x));
+      it.y=Math.max(rect.y0+it.r,Math.min(rect.y1-it.r,it.y)); });
+  }
+}
+
+let byR=[], avgPct=0;
+function buildLayout(data){
+  const gainers=data.filter(s=>s.p>=0).map(s=>({...s}));
+  const losers =data.filter(s=>s.p<0).map(s=>({...s}));
+  packGroup(gainers,G_RECT,0.58,30,150,5);
+  packGroup(losers, L_RECT,0.60,28,95,5);
+  const all=[...gainers,...losers];
+  all.forEach((it,i)=>{ const a=i*2.39996, rr=Math.sqrt(i+0.5)*14;
+    it.sx=540+Math.cos(a)*rr; it.sy=960+Math.sin(a)*rr; });
+  byR=[...all].sort((a,b)=>b.r-a.r);
+  byR.forEach((it,i)=>{ it.delay=i/all.length*250; it.phase=i*1.3; });
+  avgPct=data.reduce((s,d)=>s+d.p,0)/data.length;
+}
+
+function fmt(v){ return (v>=0?'+':'')+v.toFixed(1)+'%'; }
+
+function drawBubble(it,t){
+  const rLocal=Math.min(Math.max((t-it.delay)/800,0),1);
+  if(rLocal<=0) return;
+  const r=it.r*easeOutBack(rLocal);
+  const posP=easeOutCubic(Math.min(Math.max((t-100)/1000,0),1));
+  const ct=easeOutCubic(Math.min(t/2200,1));
+  const val=it.p*ct, up=it.p>=0, col=up?RED:GREEN;
+  let x=it.sx+(it.x-it.sx)*posP, y=it.sy+(it.y-it.sy)*posP;
+  x+=Math.sin(t/1100+it.phase)*3.2*posP; y+=Math.cos(t/1300+it.phase)*3.2*posP;
+
+  ctx.save();
+  ctx.shadowColor='rgba('+col+',0.9)';
+  ctx.shadowBlur=r*(0.45+0.06*Math.sin(t/700+it.phase));
+  const g=ctx.createRadialGradient(x,y-r*0.25,r*0.1,x,y,r);
+  g.addColorStop(0,'rgba('+col+',1)'); g.addColorStop(0.7,'rgba('+col+',0.92)');
+  g.addColorStop(1,'rgba('+col+',0.78)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  if(r>=22){
+    ctx.save(); ctx.textAlign='center'; ctx.shadowBlur=0; ctx.lineJoin='round';
+    const tf=Math.max(11,Math.min(58,r*0.46));
+    ctx.font='800 '+tf+'px sans-serif';
+    ctx.lineWidth=Math.max(2,tf*0.12); ctx.strokeStyle='rgba(0,0,0,0.35)';
+    const ty=(r>=34?-r*0.16:0)+tf*0.34;
+    ctx.strokeText(it.n,x,y+ty); ctx.fillStyle='#fff'; ctx.fillText(it.n,x,y+ty);
+    if(r>=34){
+      const pf=Math.max(10,Math.min(50,r*0.40));
+      ctx.font='700 '+pf+'px sans-serif'; ctx.lineWidth=Math.max(2,pf*0.12);
+      ctx.strokeText(fmt(val),x,y+r*0.42); ctx.fillStyle='#fff'; ctx.fillText(fmt(val),x,y+r*0.42);
+    }
+    ctx.restore();
+  }
+}
+
+let META_SRC='内置参考', META_DATE='06/18';
+function drawHeader(t){
+  const a=Math.min(t/600,1); ctx.save(); ctx.globalAlpha=a;
+  ctx.textAlign='left'; ctx.fillStyle='#fff';
+  ctx.font='800 70px sans-serif'; ctx.fillText(META_DATE.replace('/','月')+'日',44,118);
+  ctx.font='700 42px sans-serif'; ctx.fillStyle='#f1f1f1'; ctx.fillText('明星个股涨跌速览',44,178);
+  ctx.fillStyle='rgba('+RED+',1)'; ctx.beginPath(); ctx.arc(452,150,12,0,7); ctx.fill();
+  ctx.fillStyle='#e8e8e8'; ctx.font='600 28px sans-serif'; ctx.fillText('上涨',472,160);
+  ctx.fillStyle='rgba('+GREEN+',1)'; ctx.beginPath(); ctx.arc(580,150,12,0,7); ctx.fill();
+  ctx.fillStyle='#e8e8e8'; ctx.fillText('下跌',600,160);
+  ctx.textAlign='right'; ctx.fillStyle='#cfcfcf'; ctx.font='600 26px sans-serif';
+  ctx.fillText(INDEX.name,1036,92);
+  ctx.fillStyle='#fff'; ctx.font='800 54px sans-serif'; ctx.fillText(INDEX.value,1036,150);
+  ctx.fillStyle=INDEX.chg.trim()[0]==='-'?'rgba('+GREEN+',1)':'rgba('+RED+',1)';
+  ctx.font='700 32px sans-serif'; ctx.fillText(INDEX.chg,1036,192);
+  ctx.fillStyle='rgba(255,255,255,0.35)'; ctx.font='500 20px sans-serif';
+  ctx.fillText('数据·'+META_SRC+'·'+META_DATE,1036,220);
+  ctx.restore();
+}
+
+function drawDecor(t){
+  const a=Math.min(Math.max((t-1200)/1000,0),1);
+  ctx.save(); ctx.globalAlpha=a;
+  ctx.shadowColor='rgba(255,255,255,0.5)'; ctx.shadowBlur=14;
+  const grad=ctx.createLinearGradient(140,0,940,0);
+  grad.addColorStop(0,'rgba(255,255,255,0)'); grad.addColorStop(0.5,'rgba(255,255,255,0.75)');
+  grad.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.strokeStyle=grad; ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.moveTo(140,1242); ctx.lineTo(940,1242); ctx.stroke();
+  ctx.restore();
+  ctx.save(); ctx.globalAlpha=Math.min(t/1000,1); ctx.textAlign='center';
+  ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.font='800 64px sans-serif';
+  ctx.fillText(CHANNEL,540,1735);
+  ctx.fillStyle='rgba(230,230,230,0.85)'; ctx.font='600 30px sans-serif';
+  ctx.fillText('点赞关注 · 每日美股收盘更新',540,1852);
+  ctx.fillStyle='rgba(200,200,200,0.55)'; ctx.font='500 26px sans-serif';
+  ctx.fillText('仅作公开信息整理，不构成投资建议',540,1894);
+  ctx.restore();
+}
+
+function drawBg(){
+  ctx.fillStyle='#08080d'; ctx.fillRect(0,0,W,H);
+  const DIV=1242; // 分隔线位置，红绿在此处交接
+  // 红色氛围：全宽竖向渐变，一直铺到分隔线（保证下方不留黑条）
+  let lg=ctx.createLinearGradient(0,0,0,DIV);
+  lg.addColorStop(0,   'rgba(125,33,22,0.32)');
+  lg.addColorStop(0.26,'rgba(138,36,24,0.52)');
+  lg.addColorStop(0.72,'rgba(122,31,20,0.34)');
+  lg.addColorStop(1,   'rgba(112,29,19,0.26)');
+  ctx.fillStyle=lg; ctx.fillRect(0,0,W,DIV);
+  // 红色中心 bloom：增强气泡后方的发光
+  let g=ctx.createRadialGradient(540,650,80,540,650,780);
+  g.addColorStop(0,'rgba(155,42,30,0.42)'); g.addColorStop(1,'rgba(155,42,30,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,DIV);
+  // 绿色氛围：从分隔线开始向下，与红色无缝衔接
+  lg=ctx.createLinearGradient(0,DIV,0,1720);
+  lg.addColorStop(0,   'rgba(22,92,52,0.26)');
+  lg.addColorStop(0.42,'rgba(24,104,58,0.34)');
+  lg.addColorStop(1,   'rgba(20,90,50,0)');
+  ctx.fillStyle=lg; ctx.fillRect(0,DIV,W,1720-DIV);
+  // 绿色 bloom
+  g=ctx.createRadialGradient(540,1430,60,540,1430,340);
+  g.addColorStop(0,'rgba(32,124,72,0.30)'); g.addColorStop(1,'rgba(32,124,72,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,DIV,W,500);
+  // 暗角（半径放大、减弱，避免再次压黑分隔线一带）
+  g=ctx.createRadialGradient(540,960,380,540,960,1160);
+  g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,0.5)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+}
+
+let start=performance.now(), paused=false, pauseT=0;
+function frame(now){
+  const t=(now-start)%LOOP;
+  drawBg(); drawHeader(t);
+  byR.forEach(it=>drawBubble(it,t));
+  drawDecor(t);
+  if(!paused) requestAnimationFrame(frame);
+}
+
+function fmtDate(ts){ if(!ts) return META_DATE; const d=new Date(ts*1000);
+  return String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0'); }
+async function fetchLive(){
+  if(!FINNHUB_KEY) return null;
+  const syms=FALLBACK.map(s=>s.n);
+  try{
+    const [res,qqq]=await Promise.all([
+      Promise.all(syms.map(async s=>{
+        const r=await fetch('https://finnhub.io/api/v1/quote?symbol='+s+'&token='+FINNHUB_KEY);
+        if(!r.ok) throw 0; const j=await r.json();
+        return {n:s,p:(typeof j.dp==='number')?Math.round(j.dp*10)/10:null,t:j.t};
+      })),
+      fetch('https://finnhub.io/api/v1/quote?symbol=QQQ&token='+FINNHUB_KEY).then(r=>r.ok?r.json():null).catch(()=>null)
+    ]);
+    if(res.some(x=>x.p===null)) return null;
+    return {stocks:res.map(x=>({n:x.n,p:x.p})), ts:Math.max(...res.map(x=>x.t||0)), qqq:qqq};
+  }catch(e){ return null; }
+}
+
+buildLayout(FALLBACK); requestAnimationFrame(frame);
+fetchLive().then(r=>{
+  if(r){ META_SRC='实时'; META_DATE=fmtDate(r.ts);
+    if(r.qqq && typeof r.qqq.dp==='number'){
+      INDEX.name='纳指100·QQQ'; INDEX.value='$'+(r.qqq.c||0).toFixed(2); INDEX.chg=fmt(r.qqq.dp);
+    }
+    buildLayout(r.stocks); start=performance.now(); }
+});
+
+window.addEventListener('keydown',e=>{
+  if(e.code==='Space'){ e.preventDefault();
+    if(paused){ start=performance.now()-pauseT; paused=false; requestAnimationFrame(frame); }
+    else{ pauseT=(performance.now()-start)%LOOP; paused=true; } }
+  if(e.key==='r'||e.key==='R'){ start=performance.now(); if(paused){paused=false;requestAnimationFrame(frame);} }
+});
+</script>
+</body>
+</html>
